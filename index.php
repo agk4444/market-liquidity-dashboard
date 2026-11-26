@@ -456,7 +456,8 @@ function build_snapshot(): array
         'extras'     => $extras,
         'equity'     => $equity,
         'auctions'   => $auctions,
-        'errors'     => $errors,
+        // The two CDX gauges share one fetch; one failure is one error.
+        'errors'     => array_values(array_unique($errors)),
     ];
 }
 
