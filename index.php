@@ -6,6 +6,9 @@
  * Four buckets (equity, Treasury, funding, credit) from free sources only:
  *   - Yahoo Finance chart API: VIX, MOVE, 10Y yield (^TNX), DXY, HYG, LQD, SPY, QQQ
  *   - FRED (keyless CSV): SOFR, EFFR (DFF), ON RRP (RRPONTSYD) + extras
+ *   - Markets in Vitro CDX (keyless CSV): CDX.NA.IG 5Y + CDX.NA.HY 5Y, daily
+ *     median of DTCC-disseminated trades (levels approximate; history from
+ *     2025-08-11, ~15 months — the 1y percentile window is fully covered)
  *   - TreasuryDirect TA_WS API: the 8 most recent Note/Bond auctions
  * No API keys. No database. One JSON cache file (cache/snapshot.json).
  *
@@ -126,6 +129,49 @@ function fred_series(string $series, int $days = 400): array
         return ['points' => [], 'error' => "FRED $series: no data"];
     }
     return ['points' => $points, 'error' => null];
+}
+
+/** Markets in Vitro CDX daily CSV: CDX.NA.IG / CDX.NA.HY 5Y spreads in bps,
+ *  daily median of DTCC-disseminated trades (not quotes — levels approximate,
+ *  HY converted from price points). File history starts 1996 but the CDS
+ *  columns are empty before 2025-08-11; those rows are skipped. */
+function miv_cds_series(): array
+{
+    $url = 'https://marketsinvitro.com/data/cds/cds_index_daily.csv';
+    $raw = http_get($url, 25);
+    if ($raw === null) {
+        $err = 'Markets in Vitro CDX: fetch failed';
+        return ['IG' => ['points' => [], 'error' => $err],
+                'HY' => ['points' => [], 'error' => $err]];
+    }
+    $cutoff = gmdate('Y-m-d', time() - 400 * 86400);
+    $ig = [];
+    $hy = [];
+    foreach (explode("\n", $raw) as $line) {
+        $line = trim($line);
+        if ($line === '' || str_starts_with($line, 'Date')) {
+            continue;
+        }
+        $cols = str_getcsv($line, ',', '"', '');
+        $d = $cols[0] ?? '';
+        if ($d < $cutoff) {
+            continue;
+        }
+        $igv = $cols[2] ?? '';
+        $hyv = $cols[3] ?? '';
+        if ($igv !== '' && is_numeric($igv)) {
+            $ig[] = ['d' => $d, 'v' => (float) $igv];
+        }
+        if ($hyv !== '' && is_numeric($hyv)) {
+            $hy[] = ['d' => $d, 'v' => (float) $hyv];
+        }
+    }
+    return [
+        'IG' => $ig ? ['points' => $ig, 'error' => null]
+                    : ['points' => [], 'error' => 'Markets in Vitro CDX IG: no data'],
+        'HY' => $hy ? ['points' => $hy, 'error' => null]
+                    : ['points' => [], 'error' => 'Markets in Vitro CDX HY: no data'],
+    ];
 }
 
 /* ------------------------------------------------------------------ */
@@ -256,7 +302,7 @@ function build_indicator(array $cfg, array $series): ?array
     ];
 }
 
-/* The 9 core gauges — same set, sources and notes as the artifact. */
+/* The 11 core gauges — same set, sources and notes as the artifact. */
 function core_config(): array
 {
     return [
@@ -269,6 +315,8 @@ function core_config(): array
         ['key' => 'dxy',   'label' => 'Dollar Index (DXY)', 'bucket' => 'funding',  'unit' => '',  'dec' => 2, 'dir' => 'normal',   'note' => 'ICE US Dollar Index',                   'src' => ['yahoo', 'DX-Y.NYB']],
         ['key' => 'hyg',   'label' => 'HY Credit ETF (HYG)','bucket' => 'credit',   'unit' => '$', 'dec' => 2, 'dir' => 'inverted', 'note' => 'High-yield ETF price — falls as HY spreads widen', 'src' => ['yahoo', 'HYG']],
         ['key' => 'lqd',   'label' => 'IG Credit ETF (LQD)','bucket' => 'credit',   'unit' => '$', 'dec' => 2, 'dir' => 'inverted', 'note' => 'Investment-grade ETF price — falls as IG spreads widen', 'src' => ['yahoo', 'LQD']],
+        ['key' => 'cdxig', 'label' => 'CDX IG 5Y',          'bucket' => 'credit',   'unit' => 'bps','dec' => 1, 'dir' => 'normal',   'note' => 'CDX.NA.IG 5Y — cost to insure 125 IG names (DTCC trades)', 'src' => ['miv', 'IG']],
+        ['key' => 'cdxhy', 'label' => 'CDX HY 5Y',          'bucket' => 'credit',   'unit' => 'bps','dec' => 1, 'dir' => 'normal',   'note' => 'CDX.NA.HY 5Y — cost to insure 100 HY names (DTCC trades)', 'src' => ['miv', 'HY']],
     ];
 }
 
@@ -297,13 +345,17 @@ function build_snapshot(): array
     $indicators = [];
     $extras = [];
 
-    // Core 9 gauges.
+    // Core 11 gauges.
     $yahooCache = [];
+    $mivCache = null;
     foreach (core_config() as $cfg) {
         [$kind, $sym] = $cfg['src'];
         if ($kind === 'yahoo') {
             $yahooCache[$sym] ??= yahoo_series($sym);
             $series = $yahooCache[$sym];
+        } elseif ($kind === 'miv') {
+            $mivCache ??= miv_cds_series();
+            $series = $mivCache[$sym];
         } else {
             $series = fred_series($sym);
         }
@@ -610,6 +662,7 @@ function render(array $snap): string
 
     $h .= '<footer>Sources: Yahoo Finance (VIX, MOVE, 10Y, DXY, HYG, LQD, SPY, QQQ), '
         . 'FRED (SOFR, EFFR, ON RRP, NFCI, stress indexes, spreads, reserves), '
+        . 'Markets in Vitro (CDX.NA.IG / CDX.NA.HY 5Y, daily median of DTCC-disseminated trades), '
         . 'TreasuryDirect (auction results), NY Fed. Free public data, no API keys. '
         . 'Percentiles are the latest value ranked against its own 1-year history; '
         . 'stress at ≥90th percentile (≤10th for HYG, LQD, ON RRP and reserves, where low is stress), '

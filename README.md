@@ -11,8 +11,9 @@ composite verdict. No API keys, no database, one JSON cache file.
   with bid-to-cover and bidder split (indirects / directs / dealers), soft
   auctions flagged when indirects run 5+ points below the term average
 - **Funding** — SOFR, EFFR, ON RRP usage, Dollar Index
-- **Credit** — HYG, LQD, plus FRED extras when they load (NFCI, STLFSI4,
-  HY/IG OAS, 2Y yield, IORB, bank reserves, broad dollar)
+- **Credit** — HYG, LQD, CDX.NA.IG 5Y, CDX.NA.HY 5Y, plus FRED extras
+  when they load (NFCI, STLFSI4, HY/IG OAS, 2Y yield, IORB, bank reserves,
+  broad dollar)
 
 Each gauge shows its latest value ranked against its own 1-year history
 (percentile), a sparkline, and a stress label: stress at the ≥90th
@@ -26,6 +27,8 @@ FRED extras are displayed when they load but never counted in the verdict.
 - Yahoo Finance chart API (VIX, MOVE, ^TNX, DXY, HYG, LQD, SPY, QQQ)
 - FRED keyless CSV (SOFR, DFF, RRPONTSYD, NFCI, STLFSI4, BAMLH0A0HYM2,
   BAMLC0A0CM, DGS2, IORB, WRESBAL, DTWEXBGS)
+- Markets in Vitro CDX daily CSV (CDX.NA.IG / CDX.NA.HY 5Y, daily median of
+  DTCC-disseminated trades; levels approximate, history from 2025-08-11)
 - TreasuryDirect TA_WS API (auction results)
 
 When a source fails, that gauge is dropped and listed in the partial-data
